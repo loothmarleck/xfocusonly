@@ -1,0 +1,84 @@
+#!/bin/sh
+# Builds the X.Org server with xfocusonly. POSIX sh; works on any distribution.
+#
+#   ./build            build the server -> xorg/build/hw/xfree86/Xorg
+#   ./build test       build, then run the test suite (needs python3 + python-xcffib)
+#   ./build demo       compile demo.c (the keylogger)
+#   ./build clean      remove the xorg checkout and the demo
+#
+# The result is an ordinary Xorg binary; its path is printed at the end.
+# Missing build tools are reported by name (each distro installs them
+# differently), never installed for you.
+#
+# Set XORG_SRC=<dir> to build from an already-fetched xorg-server tree
+# instead of cloning.
+set -eu
+
+XORG_VERSION=21.1.18
+XORG_REPO=https://gitlab.freedesktop.org/xorg/xserver.git
+
+cd "$(dirname "$0")"
+ROOT=$(pwd)
+SRC="${XORG_SRC:-$ROOT/xorg}"
+BUILD="$SRC/build"
+
+require() {
+    missing=
+    for t in "$@"; do
+        command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
+    done
+    if [ -n "$missing" ]; then
+        echo "xfocusonly: missing required tool(s):$missing" >&2
+        echo "xfocusonly: install them with your distribution's package manager, then re-run." >&2
+        exit 1
+    fi
+}
+
+fetch() {
+    [ -d "$SRC/.git" ] && return 0
+    require git
+    echo "fetching xorg-server $XORG_VERSION"
+    git clone -q --depth 1 --branch "xorg-server-$XORG_VERSION" "$XORG_REPO" "$SRC"
+}
+
+overlay() {
+    # Idempotent: reset upstream files, then add ours. Only xfocusonly's
+    # files are ever touched, so nothing of X.Org's is lost.
+    git -C "$SRC" checkout -q -- .
+    cp "$ROOT/xfocusonly.c" "$SRC/Xext/xfocusonly.c"
+    git -C "$SRC" apply "$ROOT/xorg.patch"
+}
+
+build() {
+    require cc meson ninja pkg-config git
+    fetch
+    overlay
+    if [ ! -f "$BUILD/build.ninja" ]; then
+        if ! meson setup "$BUILD" "$SRC" -Dxorg=true -Dxvfb=true -Dxephyr=true \
+                -Dxnest=false -Dxfocusonly=true -Dxselinux=false -Ddocs=false \
+                "$@" >"$SRC/meson-setup.log" 2>&1; then
+            echo "xfocusonly: meson setup failed (usually a missing build dependency):" >&2
+            tail -n 20 "$SRC/meson-setup.log" >&2
+            exit 1
+        fi
+    fi
+    if ninja -C "$BUILD" >"$SRC/ninja.log" 2>&1; then
+        grep -E "warning:.*xfocusonly" "$SRC/ninja.log" || true
+    else
+        grep -E "error:|FAILED" "$SRC/ninja.log" >&2 || true
+        echo "xfocusonly: build failed; full log at $SRC/ninja.log" >&2
+        exit 1
+    fi
+    echo "built: $BUILD/hw/xfree86/Xorg"
+}
+
+cmd="${1:-build}"
+if [ $# -gt 0 ]; then shift; fi
+case "$cmd" in
+    build) build "$@" ;;
+    test)  build; require python3; exec python3 "$ROOT/tests.py" "$@" ;;
+    demo)  require cc; cc -O2 -o "$ROOT/demo" "$ROOT/demo.c" -lX11 -lXfixes -lXi &&
+               echo "built: $ROOT/demo" ;;
+    clean) rm -rf "$SRC" "$ROOT/demo"; echo "cleaned" ;;
+    *) sed -n '2,8p' "$0"; exit 2 ;;
+esac

@@ -1,0 +1,98 @@
+diff --git a/Xext/meson.build b/Xext/meson.build
+index 0600fe9..1bf58bc 100644
+--- a/Xext/meson.build
++++ b/Xext/meson.build
+@@ -40,6 +40,10 @@ if build_xace
+     hdrs_xext += ['xace.h', 'xacestr.h']
+ endif
+ 
++if build_xfocusonly
++    srcs_xext += 'xfocusonly.c'
++endif
++
+ if build_xf86bigfont
+     srcs_xext += 'xf86bigfont.c'
+ endif
+diff --git a/dix/events.c b/dix/events.c
+index 6c70ab4..93b5f78 100644
+--- a/dix/events.c
++++ b/dix/events.c
+@@ -1967,6 +1967,8 @@ ProcAllowEvents(ClientPtr client)
+         AllowSome(client, time, mouse, THAWED);
+         break;
+     case ReplayKeyboard:
++        if (XaceHook(XACE_DEVICE_ACCESS, client, keybd, DixWriteAccess) != Success)
++            return BadAccess;
+         AllowSome(client, time, keybd, NOT_GRABBED);
+         break;
+     case SyncKeyboard:
+diff --git a/include/extinit.h b/include/extinit.h
+index 46081ad..5e6b6bf 100644
+--- a/include/extinit.h
++++ b/include/extinit.h
+@@ -143,6 +143,11 @@ extern _X_EXPORT Bool noSELinuxExtension;
+ extern void SELinuxExtensionInit(void);
+ #endif
+ 
++#ifdef XFOCUSONLY
++extern _X_EXPORT Bool noXFocusOnlyExtension;
++extern void XFocusOnlyExtensionInit(void);
++#endif
++
+ #ifdef XTEST
+ extern void XTestExtensionInit(void);
+ #endif
+diff --git a/include/meson.build b/include/meson.build
+index bda84bd..91326ea 100644
+--- a/include/meson.build
++++ b/include/meson.build
+@@ -226,6 +226,7 @@ conf_data.set('RENDER', '1')
+ conf_data.set('SCREENSAVER', build_screensaver ? '1' : false)
+ conf_data.set('SHAPE', '1')
+ conf_data.set('XACE', build_xace ? '1' : false)
++conf_data.set('XFOCUSONLY', build_xfocusonly ? '1' : false)
+ conf_data.set('XCMISC', '1')
+ conf_data.set('XCSECURITY', build_xsecurity ? '1' : false)
+ conf_data.set('XDMCP', xdmcp_dep.found() ? '1' : false)
+diff --git a/meson.build b/meson.build
+index fff9a6c..bb0de94 100644
+--- a/meson.build
++++ b/meson.build
+@@ -465,6 +465,10 @@ if build_res
+ endif
+ 
+ build_xace = get_option('xace')
++build_xfocusonly = get_option('xfocusonly')
++if build_xfocusonly and not build_xace
++    error('cannot build xfocusonly without X-ACE')
++endif
+ build_xinerama = get_option('xinerama')
+ 
+ build_xsecurity = get_option('xcsecurity')
+diff --git a/meson_options.txt b/meson_options.txt
+index b12d521..8959837 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -79,6 +79,8 @@ option('xres', type: 'boolean', value: true,
+        description: 'XRes extension')
+ option('xace', type: 'boolean', value: true,
+        description: 'X-ACE extension')
++option('xfocusonly', type: 'boolean', value: true,
++       description: 'xfocusonly: keystrokes and clipboard only for the focused client')
+ option('xselinux', type: 'combo', choices: ['true', 'false', 'auto'], value: 'auto',
+        description: 'XSELINUX extension')
+ option('xinerama', type: 'boolean', value: true,
+diff --git a/mi/miinitext.c b/mi/miinitext.c
+index 2e4aba5..ebdcd30 100644
+--- a/mi/miinitext.c
++++ b/mi/miinitext.c
+@@ -170,6 +170,9 @@ static const ExtensionModule staticExtensions[] = {
+ #ifdef XSELINUX
+     {SELinuxExtensionInit, "SELinux", &noSELinuxExtension},
+ #endif
++#ifdef XFOCUSONLY
++    {XFocusOnlyExtensionInit, "XFOCUSONLY", &noXFocusOnlyExtension},
++#endif
+ #ifdef GLXEXT
+     {GlxExtensionInit, "GLX", &noGlxExtension},
+ #endif
